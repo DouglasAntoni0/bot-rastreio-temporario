@@ -1,0 +1,21 @@
+{
+  "name": "rastreio-rodonaves",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monitor Rodonaves com notificações privadas no Telegram e armazenamento local ou em nuvem",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node src/cli.js run",
+    "start:cloud": "node src/cli.js run --cloud",
+    "test": "node --test test/monitor.test.js test/sources.test.js test/cloud.test.js",
+    "once": "node src/cli.js once",
+    "status": "node src/cli.js status",
+    "chat": "node src/cli.js discover-chat",
+    "telegram:test": "node src/cli.js test-telegram",
+    "config:check": "node src/cli.js check-config",
+    "state:backup": "node src/cli.js backup-state",
+    "state:init": "node src/cli.js init-state",
+    "state:import": "node src/cli.js import-state"
+  }
+}
