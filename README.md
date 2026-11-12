@@ -73,7 +73,12 @@ Para testar o Telegram antes do upload, carregue os mesmos valores no `.env` loc
    node --env-file=.env src/cli.js backup-state backups/rastreio-nuvem.state.json --cloud
    ```
 
-2. Envie a nova versão do código para o GitHub e, na aplicação, execute **Commit GitHub** para atualizar manualmente a mesma branch. Mantenha as variáveis e o banco. Se o processo estiver offline, inicie-o pelo painel.
+2. Envie a nova versão do código para o GitHub. Gere o ZIP a partir do commit publicado e selecione-o em **Aplicação → Commit → Novo commit**. Mantenha as variáveis e o banco. Se o processo estiver offline, inicie-o pelo painel.
+
+   ```sh
+   git archive --format=zip -o rastreio-deploy.zip HEAD discloud.config package.json package-lock.json src
+   ```
+
 3. Confira os logs e rode `node --env-file=.env src/cli.js status --cloud`. Uma atualização ou reinício lê o mesmo histórico externo. O ZIP de código da Discloud e o repositório público ficam separados dos backups.
 
 Para restaurar um backup, pare a aplicação, escolha um `STATE_NAMESPACE` ainda vazio, configure-o no `.env` e execute `npm run state:import -- backups/arquivo.state.json`. Use o mesmo namespace na Discloud antes de reiniciar. Prefira o backup mais recente para preservar os registros dos avisos já enviados.
