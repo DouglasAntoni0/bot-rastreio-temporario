@@ -88,17 +88,23 @@ export class CloudState {
   }
 }
 
-export function cloudMonitor({ remote, shipment, source, telegram, link, log = () => {}, clock }) {
+export function cloudMonitor({ remote, shipment, initializeOnSuccess = false, log = () => {}, ...options }) {
   return {
     async cycle(signal) {
       try {
         return await remote.withLease(async ({ snapshot, save }) => {
-          if (!snapshot) throw new BotError('STATE_MISSING');
+          if (!snapshot && !initializeOnSuccess) throw new BotError('STATE_MISSING');
           const store = new Store(':memory:', shipment);
           try {
-            store.restoreSnapshot(snapshot);
+            if (snapshot) store.restoreSnapshot(snapshot);
             store.recoverSending();
-            const monitor = new Monitor({ store, source, telegram, link, log, clock, checkpoint: () => save(store.exportSnapshot()) });
+            let initialize = !snapshot;
+            const checkpoint = async () => {
+              if (initialize && !store.getState().initialized) return;
+              await save(store.exportSnapshot(), { initialize });
+              initialize = false;
+            };
+            const monitor = new Monitor({ ...options, store, log, checkpoint });
             return await monitor.cycle(signal);
           } finally { store.close(); }
         }, signal);

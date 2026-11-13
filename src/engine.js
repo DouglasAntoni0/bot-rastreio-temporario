@@ -1,10 +1,11 @@
 import { eventMessage, failureMessage, stateMessage } from './messages.js';
 import { safeCode } from './errors.js';
 import { setTimeout as delay } from 'node:timers/promises';
+import { normalize } from './normalize.js';
 
 export class Monitor {
-  constructor({ store, source, telegram, link, checkpoint, log = () => {}, clock = () => Date.now() }) {
-    Object.assign(this, { store, source, telegram, link, checkpoint, log, clock });
+  constructor({ store, source, telegram, link, carrier, failureAlerts = true, checkpoint, log = () => {}, clock = () => Date.now() }) {
+    Object.assign(this, { store, source, telegram, link, carrier, failureAlerts, checkpoint, log, clock });
     this.busy = false;
   }
   recordSuccess(snapshot) {
@@ -15,13 +16,19 @@ export class Monitor {
       const incomingIds = new Set(snapshot.events.map(x => x.id));
       const frontier = stored.filter(x => x.occurred_at === old.latestAt);
       const newer = !old.latestAt || snapshot.latestAt > old.latestAt;
-      const anchored = snapshot.latestAt === old.latestAt && frontier.every(x => incomingIds.has(x.id));
-      const fresh = newer || anchored;
       const known = new Set(stored.map(x => x.id));
+      const hasCarrierStatus = snapshot.statusText !== undefined;
+      const anchored = snapshot.latestAt === old.latestAt && (hasCarrierStatus
+        ? snapshot.events.some(event => event.occurredAt === old.latestAt && known.has(event.id) && normalize(event.statusText) === normalize(old.statusText))
+        : frontier.every(x => incomingIds.has(x.id)));
+      // A carrier may correct the latest SSW row without changing its timestamp.
+      const newFrontier = hasCarrierStatus && snapshot.latestAt === old.latestAt &&
+        snapshot.events.some(event => event.occurredAt === snapshot.latestAt && !known.has(event.id));
+      const fresh = newer || anchored || newFrontier;
       const newEvents = [];
       for (const event of snapshot.events) {
-        if (known.has(event.id)) continue;
-        const announce = old.initialized && fresh && event.occurredAt >= old.latestAt;
+        if (known.has(event.id) || (hasCarrierStatus && !fresh)) continue;
+        const announce = old.initialized && fresh && (hasCarrierStatus || event.occurredAt >= old.latestAt);
         this.store.db.prepare('INSERT INTO events VALUES (?,?,?,?)').run(event.id, event.occurredAt, event.description, announce ? 0 : 1);
         if (announce) newEvents.push(event);
       }
@@ -33,11 +40,20 @@ export class Monitor {
         // A stale/open response must never undo a completed delivery.
         current.status = old.status === 2 || old.status === 3 ? old.status : snapshot.status;
         current.eta = snapshot.eta ?? old.eta;
+        if (hasCarrierStatus) {
+          const previousStillLatest = !newer && !newFrontier && snapshot.events.some(event =>
+            event.occurredAt === old.latestAt && normalize(event.statusText) === normalize(old.statusText));
+          current.statusText = previousStillLatest || normalize(old.statusText) === normalize(snapshot.statusText)
+            ? old.statusText : snapshot.statusText;
+        }
       }
-      for (const event of newEvents) this.store.queue({ id: `event:${event.id}`, kind: 'event', eventId: event.id, text: eventMessage(event, current, this.link), now });
-      if (old.initialized && fresh && (old.status !== current.status || old.eta !== current.eta)) {
+      for (const event of newEvents) this.store.queue({ id: `event:${event.id}`, kind: 'event', eventId: event.id, text: eventMessage(event, current, this.link, this.carrier), now });
+      const statusInEvent = hasCarrierStatus && newEvents.some(event => event.occurredAt === current.latestAt && event.statusText === current.statusText);
+      const statusChanged = old.status !== current.status || old.statusText !== current.statusText;
+      const etaChanged = old.eta !== current.eta;
+      if (old.initialized && fresh && ((statusChanged && !statusInEvent) || (etaChanged && !(hasCarrierStatus && newEvents.length)))) {
         current.revision++;
-        this.store.queue({ id: `state:${current.revision}`, kind: 'state', text: stateMessage(old, current, this.link), now });
+        this.store.queue({ id: `state:${current.revision}`, kind: 'state', text: stateMessage(old, current, this.link, this.carrier), now });
       }
       this.store.setState(current);
       return { baseline: !old.initialized, fresh, newEvents: newEvents.length };
@@ -49,7 +65,7 @@ export class Monitor {
       const state = this.store.getState();
       if (state.failures === 0) state.failureSeq++;
       state.failures++;
-      if (state.failures >= 3 && !state.failureAlertSent) this.store.queue({ id: `failure:${state.failureSeq}`, kind: 'failure', failureSeq: state.failureSeq, text: failureMessage, now });
+      if (this.failureAlerts && state.failures >= 3 && !state.failureAlertSent) this.store.queue({ id: `failure:${state.failureSeq}`, kind: 'failure', failureSeq: state.failureSeq, text: failureMessage, now });
       this.store.setState(state);
       return state.failures;
     });
@@ -101,6 +117,20 @@ export class Monitor {
       return { success: !!snapshot };
     } finally { this.busy = false; }
   }
+}
+
+export function combinedMonitor(monitors, log) {
+  return {
+    async cycle(signal) {
+      return Promise.all(monitors.map(async ([source, monitor]) => {
+        try { return await monitor.cycle(signal); }
+        catch (error) {
+          if (!signal?.aborted) log('source_cycle_failed', { source, code: safeCode(error) });
+          return { success: false };
+        }
+      }));
+    },
+  };
 }
 
 export async function runLoop(monitor, { pollSeconds = 300, signal, sleep = delay, clock = () => Date.now() } = {}) {

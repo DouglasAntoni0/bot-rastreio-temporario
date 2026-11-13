@@ -74,6 +74,7 @@ export class Store {
     if (typeof state?.initialized !== 'boolean' || typeof state.failureAlertSent !== 'boolean' ||
         ![state.failures, state.failureSeq, state.revision].every(n => Number.isSafeInteger(n) && n >= 0) ||
         ![null, 1, 2, 3].includes(state.status) || ![state.eta, state.latestAt, state.lastSuccess].every(x => x === null || typeof x === 'string') ||
+        (state.statusText !== undefined && typeof state.statusText !== 'string') ||
         (state.initialized && (typeof state.latestAt !== 'string' || !events.length)) ||
         outbox.some(x => !['pending', 'sending', 'sent', 'uncertain', 'cancelled'].includes(x?.status))) {
       throw new BotError('STATE_INVALID');

@@ -32,5 +32,10 @@ export function parseConfig(env, { needChat = true, needToken = true, needShipme
     if (!/^https:\/\/[a-z\d-]+\.upstash\.io$/i.test(url ?? '') || !/^[\w=-]{16,}$/.test(redisToken ?? '') || !/^[\w-]{1,48}$/.test(namespace)) throw new BotError('CONFIG_STATE_INVALID');
     state = { url, token: redisToken, namespace };
   }
-  return { token, chatId, shipment, intervalMs, state, dataDir: path.join(ROOT, 'data'), logDir: path.join(ROOT, 'logs'), link: `https://rodonaves.com.br/rastreamento/${shipment.protocol}?modal=rodoviario` };
+  const cpf = env.SSW_CPF?.trim();
+  const invoice = env.SSW_NF?.trim();
+  const ssw = /^\d{11}$/.test(cpf ?? '') && /^\d{1,9}$/.test(invoice ?? '')
+    ? { cpf, invoice: invoice.replace(/^0+(?=\d)/, '') }
+    : null;
+  return { token, chatId, shipment, intervalMs, state, ssw, sswInvalid: !!((cpf || invoice) && !ssw), dataDir: path.join(ROOT, 'data'), logDir: path.join(ROOT, 'logs'), link: `https://rodonaves.com.br/rastreamento/${shipment.protocol}?modal=rodoviario` };
 }

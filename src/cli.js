@@ -4,7 +4,7 @@ import { loadConfig, ENV_PATH } from './config.js';
 import { Store, InstanceLock } from './store.js';
 import { Rodonaves } from './rodonaves.js';
 import { Telegram } from './telegram.js';
-import { Monitor, runLoop } from './engine.js';
+import { Monitor, combinedMonitor, runLoop } from './engine.js';
 import { makeLogger } from './logger.js';
 import { BotError, safeCode } from './errors.js';
 import { CloudState, cloudMonitor } from './cloud-state.js';
@@ -23,6 +23,7 @@ const explanations = {
   CONFIG_TOKEN_INVALID: 'Configure TELEGRAM_BOT_TOKEN nas variáveis privadas do ambiente.',
   CONFIG_SHIPMENT_INVALID: 'Confira RODONAVES_PROTOCOLO, RODONAVES_CTE, RODONAVES_CNPJ e RODONAVES_NF.',
   CONFIG_INTERVAL_INVALID: 'Informe CHECK_INTERVAL_MS entre 300000 e 86400000.',
+  SSW_CONFIG_INVALID: 'Configure SSW_CPF com 11 dígitos e SSW_NF com o número da nota.',
   CONFIG_STATE_INVALID: 'Confira UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN e STATE_NAMESPACE.',
   DATABASE_SHIPMENT_MISMATCH: 'Os dados da encomenda diferem do histórico. Use os mesmos valores da origem.',
   STATE_MISSING: 'Histórico ausente. Importe o backup ou inicialize um histórico novo conforme o README.',
@@ -40,7 +41,7 @@ try {
     remote: cloud || ['init-state', 'import-state'].includes(command),
     needToken: telegramCommands.includes(command),
     needChat: telegramCommands.includes(command) && command !== 'discover-chat',
-    needShipment: !['discover-chat', 'test-telegram'].includes(command),
+    needShipment: !['discover-chat', 'test-telegram', 'verify-ssw'].includes(command),
   });
   const telegram = new Telegram(config.token, config.chatId);
   if (command === 'check-config') {
@@ -71,6 +72,11 @@ try {
     const source = new Rodonaves(config.shipment);
     const snapshot = await source.consult(controller.signal);
     console.log(JSON.stringify(snapshot, null, 2));
+  } else if (command === 'verify-ssw') {
+    if (!config.ssw) throw new BotError('SSW_CONFIG_INVALID');
+    const { Ssw } = await import('./ssw.js');
+    const { statusText, eta, latestAt, events } = await new Ssw(config.ssw).consult(controller.signal);
+    console.log(JSON.stringify({ source: 'ssw', status: statusText, eta, latestAt, movements: events.length }, null, 2));
   } else if (command === 'status') {
     const filename = path.join(config.dataDir, 'tracking.sqlite');
     if (!fs.existsSync(filename)) console.log('O bot ainda não fez a primeira consulta.');
@@ -83,9 +89,24 @@ try {
   } else if (cloud && ['run', 'once'].includes(command)) {
     log = makeLogger(null, { consoleOutput: true });
     log('config_valid', { backend: 'upstash', nodeVersion: process.versions.node, intervalMs: config.intervalMs });
-    const remote = new CloudState(config.state, config.shipment, { log });
-    const source = new Rodonaves(config.shipment, { log });
-    const monitor = cloudMonitor({ remote, shipment: config.shipment, source, telegram, link: config.link, log });
+    const sourceLogger = source => (event, metadata) => log(event, { ...metadata, source });
+    const rodonavesLog = sourceLogger('rodonaves');
+    const remote = new CloudState(config.state, config.shipment, { log: rodonavesLog });
+    const source = new Rodonaves(config.shipment, { log: rodonavesLog });
+    const rodonaves = cloudMonitor({ remote, shipment: config.shipment, source, telegram, link: config.link, log: rodonavesLog });
+    let monitor = rodonaves;
+    if (config.sswInvalid) log('source_disabled', { source: 'ssw', code: 'SSW_CONFIG_INVALID' });
+    if (config.ssw) {
+      const { Ssw, SSW_FORM } = await import('./ssw.js');
+      const sswLog = sourceLogger('ssw');
+      const state = { ...config.state, namespace: `${config.state.namespace}:ssw` };
+      const ssw = cloudMonitor({
+        remote: new CloudState(state, config.ssw, { log: sswLog }), shipment: config.ssw,
+        source: new Ssw(config.ssw), telegram, link: SSW_FORM, log: sswLog,
+        carrier: 'Trans Vales (SSW)', initializeOnSuccess: true, failureAlerts: false,
+      });
+      monitor = combinedMonitor([['rodonaves', rodonaves], ['ssw', ssw]], log);
+    }
     log('started', { rssMiB: Math.round(process.memoryUsage().rss / 1048576) });
     if (command === 'once') await monitor.cycle(controller.signal);
     else await runLoop(monitor, { pollSeconds: config.intervalMs / 1000, signal: controller.signal });

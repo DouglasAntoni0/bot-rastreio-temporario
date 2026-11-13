@@ -1,5 +1,16 @@
 import { BotError } from './errors.js';
 
+export async function readBody(response) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > 2 * 1024 * 1024) throw new BotError('HTTP_RESPONSE_TOO_LARGE', { ambiguous: true });
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function requestJson(url, { body, headers = {}, timeoutMs = 20000, signal, fetchImpl = fetch } = {}) {
   let response;
   try {
@@ -10,15 +21,9 @@ export async function requestJson(url, { body, headers = {}, timeoutMs = 20000, 
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       redirect: 'error',
     });
-    let size = 0;
-    const chunks = [];
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > 2 * 1024 * 1024) throw new BotError('HTTP_RESPONSE_TOO_LARGE', { ambiguous: true });
-      chunks.push(chunk);
-    }
+    const bytes = await readBody(response);
     let json;
-    try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+    try { json = JSON.parse(bytes.toString('utf8')); }
     catch { throw new BotError('HTTP_INVALID_JSON', { ambiguous: true }); }
     return { status: response.status, ok: response.ok, headers: response.headers, json };
   } catch (error) {

@@ -1,6 +1,6 @@
 # Rastreio Rodonaves
 
-Bot Node.js que consulta a Rodonaves a cada cinco minutos e envia avisos ao seu chat privado do Telegram. Funciona em segundo plano no Windows com SQLite e na Discloud com histórico persistente no Upstash Redis Free.
+Bot Node.js que consulta a Rodonaves e, quando configurado na Discloud, a Trans Vales (SSW) a cada cinco minutos. As duas fontes usam o mesmo chat privado do Telegram. Funciona em segundo plano no Windows com SQLite e na Discloud com histórico persistente no Upstash Redis Free.
 
 ## Instalação local
 
@@ -25,12 +25,16 @@ O `.env` anterior continua aceito. Os aliases `TRACKING_PROTOCOL`, `TRACKING_CTE
 | `RODONAVES_CTE` | Número do CT-e. |
 | `RODONAVES_CNPJ` | CNPJ vinculado, com 14 dígitos. |
 | `RODONAVES_NF` | Número da nota fiscal. |
+| `SSW_CPF` | Opcional. CPF do destinatário como texto de 11 dígitos, incluindo o zero inicial. |
+| `SSW_NF` | Opcional. Número da nota fiscal na SSW, sem a série. |
 | `CHECK_INTERVAL_MS` | `300000` para consultar a cada cinco minutos. |
 | `UPSTASH_REDIS_REST_URL` | Endpoint HTTPS do Redis de produção, usado na nuvem. |
 | `UPSTASH_REDIS_REST_TOKEN` | Token Standard do REST API do Upstash, com permissão de gravação. |
 | `STATE_NAMESPACE` | Opcional. Use `rodonaves` e mantenha o mesmo valor nas atualizações. |
 
 O `.env` é carregado na execução local. O comando `npm run start:cloud` lê `process.env`. Guarde os valores privados no painel da Discloud ou no `.env` local e use somente os valores fictícios de `.env.example` no Git.
+
+Preencha as duas variáveis `SSW_` para habilitar a Trans Vales na nuvem. Para testar apenas a consulta no PC, execute `node src/cli.js verify-ssw`. Esse comando consulta a SSW e mostra a situação, a data da última movimentação e a previsão, sem enviar mensagens ou alterar o histórico.
 
 ## Como hospedar na Discloud Gold
 
@@ -62,6 +66,8 @@ Após o primeiro deploy, abra **Configurações → Integração com GitHub** no
 ### 3. Iniciar e validar
 
 Na lista **Aplicações**, abra o bot. Use **Iniciar** se estiver offline e confira os **Logs**. Procure `config_valid`, `started` e `tracking_ok` ou `baseline_saved`. `config_valid` confirma que o processo recebeu as variáveis obrigatórias e mostra apenas versão do Node, intervalo e backend. Confira uma segunda consulta após cinco minutos e o consumo de RAM no painel.
+
+Com a SSW habilitada, confira `tracking_ok` ou `baseline_saved` para `source=ssw` e `source=rodonaves`. `SSW_HTTP_403` indica que a SSW recusou a consulta daquele ambiente. A Rodonaves continua consultando na mesma rodada.
 
 Para testar o Telegram antes do upload, carregue os mesmos valores no `.env` local e rode `npm run telegram:test`. O comando valida o tipo privado do chat antes de enviar uma mensagem identificada como teste.
 
@@ -107,10 +113,11 @@ node --env-file=.env src/cli.js resolve ID_DA_NOTIFICACAO sent --cloud
 ## Como o monitor funciona
 
 - A consulta usa a API que o portal Rodonaves utiliza, com o transporte JWE exigido pelo serviço. O protocolo é a primeira opção e CT-e/CNPJ é o caminho alternativo.
+- A SSW usa o formulário de destinatário com CPF, nota e senha em branco. O bot valida a nota na lista e no detalhamento. A primeira consulta válida salva o histórico em silêncio no mesmo Redis, com chave e fila próprias. As próximas avisam sobre movimentações novas ou mudanças de situação e previsão. A falta de uma previsão em uma resposta preserva a última data informada.
 - Movimentações têm identificadores derivados de horário e descrição normalizados. O monitor ignora reordenação, preserva o histórico conhecido e identifica mudanças de status ou previsão.
-- Falhas 1 e 2 ficam nos logs. A falha 3 enfileira um alerta. As seguintes preservam o mesmo alerta. A próxima consulta válida zera o contador.
+- Na Rodonaves, falhas 1 e 2 ficam nos logs e a falha 3 enfileira um alerta. As seguintes preservam o mesmo alerta. As falhas da SSW ficam apenas nos logs. A próxima consulta válida zera o contador da respectiva fonte.
 - No Windows, o SQLite guarda as transações. Na nuvem, o SQLite em memória usa o mesmo código e carrega o estado do Redis por rodada. Um bloqueio remoto evita consultas concorrentes entre instâncias da nuvem. A fila é salva antes de enviar e o recibo é salvo após a resposta do Telegram.
-- A chave do estado no Redis não expira. O bloqueio tem prazo para liberar uma instância que caiu. Se o Redis ficar indisponível, o bot adia a rodada para preservar o estado válido. Erros críticos saem com código de erro nos logs.
+- As chaves de estado no Redis não expiram. Cada bloqueio tem prazo para liberar uma instância que caiu. Se o Redis ficar indisponível, o bot adia a rodada para preservar o estado válido. Erros críticos aparecem com código de erro nos logs.
 
 ## Publicação e testes
 
@@ -124,4 +131,4 @@ git ls-files
 git push -u origin main
 ```
 
-Os testes usam dados fictícios e cobrem deduplicação, alertas, retomada do histórico, bloqueios, fila de notificações e validação de configuração. O código de produção usa apenas módulos do Node.js.
+Os testes usam dados fictícios e cobrem deduplicação, alertas, retomada do histórico, bloqueios, fila de notificações e validação de configuração. A leitura do HTML da SSW usa `parse5` e o cliente HTTP do Node, sem abrir um navegador.
