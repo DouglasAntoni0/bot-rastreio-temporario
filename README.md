@@ -57,7 +57,7 @@ Se for uma instalação realmente nova, execute `npm run state:init` no lugar do
 3. Em **Variáveis de ambiente**, preencha a tabela acima. O painel oferece **Colar .env** para adicionar as variáveis em lote. Use apenas as variáveis necessárias ao bot e confira os nomes antes de continuar.
 4. Revise a configuração e conclua o upload manual. O `discloud.config` na raiz aponta para `src/cli.js`, executa o modo de nuvem, usa `TYPE=bot`, `VERSION=latest` (Node LTS) e reserva 128 MB. O projeto requer Node.js 24 ou mais recente.
 
-O Gold permite manter o processo rodando continuamente. O deploy manual mantém o controle de quando atualizar, e `AUTORESTART` foi omitido conforme a disponibilidade do plano. [Integração GitHub](https://docs.discloud.com/en/api-and-integrations/github-integration) · [discloud.config](https://docs.discloud.com/configurations/discloud.config) · [Versões](https://docs.discloud.com/configurations/discloud.config/versions)
+Após o primeiro deploy, abra **Configurações → Integração com GitHub** no menu lateral da Discloud. Na linha do bot, deixe o **Auto-deploy** como **Inativo** para controlar as atualizações pelo painel. O Gold permite manter o processo em execução contínua. O `discloud.config` omite `AUTORESTART`, que é uma opção separada para reinício após falhas. [Integração GitHub](https://docs.discloud.com/en/api-and-integrations/github-integration) · [discloud.config](https://docs.discloud.com/configurations/discloud.config) · [Versões](https://docs.discloud.com/configurations/discloud.config/versions)
 
 ### 3. Iniciar e validar
 
